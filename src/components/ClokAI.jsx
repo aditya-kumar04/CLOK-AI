@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Mic, MicOff, MessageSquare, Bot, User, Plus, Menu } from 'lucide-react';
+import { Send, Mic, MicOff, MessageSquare, Bot, User, Plus, Menu, ChevronDown, Settings } from 'lucide-react';
 import { useSpeechToText } from '../hooks/useSpeechToText';
 import { useTextToSpeech } from '../hooks/useTextToSpeech';
+import { clokService } from '../services/clokService';
 
 export const ClokAI = ({ 
   onSendMessage = async (message) => {
@@ -16,8 +17,11 @@ export const ClokAI = ({
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [showModelDropdown, setShowModelDropdown] = useState(false);
+  const [currentModel, setCurrentModel] = useState('auto');
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
+  const modelDropdownRef = useRef(null);
 
   const {
     isListening,
@@ -45,6 +49,41 @@ export const ClokAI = ({
     }
   }, [transcript]);
 
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (modelDropdownRef.current && !modelDropdownRef.current.contains(event.target)) {
+        setShowModelDropdown(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Model selection handler
+  const handleModelSelect = (model) => {
+    setCurrentModel(model);
+    clokService.currentModel = model;
+    setShowModelDropdown(false);
+  };
+
+  // Get model display name
+  const getModelDisplayName = (model) => {
+    const modelNames = {
+      'auto': 'Auto Select',
+      'groq': 'Groq',
+      'gemini': 'Gemini',
+      'llama-3.1-8b-instant': 'Llama 3.1 (Fast)',
+      'llama-3.1-70b-versatile': 'Llama 3.1 (Smart)',
+      'mixtral-8x7b-32768': 'Mixtral',
+      'gemma2-9b-it': 'Gemma 2',
+      'gemini-1.5-flash': 'Gemini 1.5 Flash'
+      // Updated to SDK model name
+    };
+    return modelNames[model] || model;
+  };
+
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
@@ -53,6 +92,11 @@ export const ClokAI = ({
   }, [inputText]);
 
   const handleSendMessage = async (content) => {
+    console.log('=== CLOKAI COMPONENT DEBUG ===');
+    console.log('Content:', content);
+    console.log('onSendMessage prop:', typeof onSendMessage);
+    console.log('onSendMessage function:', !!onSendMessage);
+    
     if (!content.trim()) return;
 
     const userMessage = {
@@ -65,57 +109,35 @@ export const ClokAI = ({
 
     setMessages(prev => [...prev, userMessage]);
     setInputText('');
-    resetTranscript();
     setIsTyping(true);
 
     try {
-      if (content.startsWith('/generate ')) {
-        const prompt = content.replace('/generate ', '').trim();
-        
-        const loadingMessage = {
-          id: Date.now() + 1,
-          type: 'image',
-          prompt,
-          loading: true,
-          sender: 'assistant',
-          timestamp: new Date().toISOString()
-        };
-        setMessages(prev => [...prev, loadingMessage]);
+      console.log('Calling onSendMessage from component...');
+      const response = await onSendMessage(content);
+      console.log('Response received in component:', response);
+      
+      const assistantMessage = {
+        id: Date.now() + 1,
+        type: response.type || 'text',
+        content: response.content || 'No response received',
+        sender: 'assistant',
+        timestamp: new Date().toISOString(),
+        ...(response.imageUrl && { imageUrl: response.imageUrl }),
+        ...(response.prompt && { prompt: response.prompt })
+      };
 
-        setTimeout(() => {
-          setMessages(prev => prev.map(msg => 
-            msg.id === loadingMessage.id 
-              ? {
-                  ...msg,
-                  loading: false,
-                  imageUrl: `https://picsum.photos/seed/${encodeURIComponent(prompt)}/512/512.jpg`
-                }
-              : msg
-          ));
-        }, 2000);
-      } else {
-        const response = await onSendMessage(content);
-        const assistantMessage = {
-          id: Date.now() + 1,
-          type: response.type || 'text',
-          content: response.content,
-          sender: 'assistant',
-          timestamp: new Date().toISOString(),
-          ...response
-        };
-
-        setMessages(prev => [...prev, assistantMessage]);
-      }
+      setMessages(prev => [...prev, assistantMessage]);
+      console.log('=== CLOKAI COMPONENT DEBUG END ===');
     } catch (error) {
-      console.error('Error sending message:', error);
-      const errorMessage = {
+      console.error('Error in handleSendMessage:', error);
+      setMessages(prev => [...prev, {
         id: Date.now() + 1,
         type: 'text',
-        content: 'Sorry, something went wrong. Please try again.',
+        content: 'Sorry, there was an error processing your message.',
         sender: 'assistant',
-        timestamp: new Date().toISOString()
-      };
-      setMessages(prev => [...prev, errorMessage]);
+        timestamp: new Date().toISOString(),
+        isError: true
+      }]);
     } finally {
       setIsTyping(false);
     }
@@ -241,6 +263,150 @@ export const ClokAI = ({
               <Bot size={18} style={{ color: '#fff' }} />
             </div>
             <div style={{ fontSize: '16px', fontWeight: '600', color: '#212529' }}>Clok AI</div>
+          </div>
+          
+          {/* Model Selection Dropdown */}
+          <div style={{ marginLeft: 'auto', position: 'relative' }} ref={modelDropdownRef}>
+            <button
+              onClick={() => setShowModelDropdown(!showModelDropdown)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '8px 12px',
+                background: '#ffffff',
+                border: '1px solid #dee2e6',
+                borderRadius: '8px',
+                fontSize: '14px',
+                color: '#495057',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                ':hover': {
+                  background: '#f8f9fa',
+                  borderColor: '#007bff'
+                }
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.background = '#f8f9fa';
+                e.target.style.borderColor = '#007bff';
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.background = '#ffffff';
+                e.target.style.borderColor = '#dee2e6';
+              }}
+            >
+              <Settings size={14} />
+              <span>{getModelDisplayName(currentModel)}</span>
+              <ChevronDown size={14} style={{ 
+                transition: 'transform 0.2s ease',
+                transform: showModelDropdown ? 'rotate(180deg)' : 'rotate(0deg)'
+              }} />
+            </button>
+            
+            {showModelDropdown && (
+              <div style={{
+                position: 'absolute',
+                top: '100%',
+                right: '0',
+                marginTop: '8px',
+                background: '#ffffff',
+                border: '1px solid #dee2e6',
+                borderRadius: '8px',
+                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+                zIndex: 1000,
+                minWidth: '200px',
+                maxHeight: '300px',
+                overflowY: 'auto'
+              }}>
+                {/* Auto Selection */}
+                <div
+                  onClick={() => handleModelSelect('auto')}
+                  style={{
+                    padding: '10px 16px',
+                    cursor: 'pointer',
+                    borderBottom: '1px solid #f1f3f4',
+                    fontSize: '14px',
+                    color: currentModel === 'auto' ? '#007bff' : '#495057',
+                    background: currentModel === 'auto' ? '#f8f9ff' : 'transparent',
+                    ':hover': {
+                      background: '#f8f9fa'
+                    }
+                  }}
+                  onMouseEnter={(e) => {
+                    e.target.style.background = currentModel === 'auto' ? '#f8f9ff' : '#f8f9fa';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.target.style.background = currentModel === 'auto' ? '#f8f9ff' : 'transparent';
+                  }}
+                >
+                  🔄 Auto Select
+                  <div style={{ fontSize: '12px', color: '#6c757d', marginTop: '2px' }}>
+                    Automatically choose best model
+                  </div>
+                </div>
+                
+                {/* Provider Sections */}
+                <div style={{ padding: '8px 0', borderBottom: '1px solid #f1f3f4' }}>
+                  <div style={{ padding: '4px 16px', fontSize: '12px', color: '#6c757d', fontWeight: '600' }}>
+                    GROQ MODELS
+                  </div>
+                  {['groq', 'llama-3.1-8b-instant', 'llama-3.1-70b-versatile', 'mixtral-8x7b-32768', 'gemma2-9b-it'].map(model => (
+                    <div
+                      key={model}
+                      onClick={() => handleModelSelect(model)}
+                      style={{
+                        padding: '8px 16px',
+                        cursor: 'pointer',
+                        fontSize: '14px',
+                        color: currentModel === model ? '#007bff' : '#495057',
+                        background: currentModel === model ? '#f8f9ff' : 'transparent',
+                        ':hover': {
+                          background: '#f8f9fa'
+                        }
+                      }}
+                      onMouseEnter={(e) => {
+                        e.target.style.background = currentModel === model ? '#f8f9ff' : '#f8f9fa';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.target.style.background = currentModel === model ? '#f8f9ff' : 'transparent';
+                      }}
+                    >
+                      {getModelDisplayName(model)}
+                    </div>
+                  ))}
+                </div>
+                
+                <div style={{ padding: '8px 0' }}>
+                  <div style={{ padding: '4px 16px', fontSize: '12px', color: '#6c757d', fontWeight: '600' }}>
+                    GEMINI MODELS
+                  </div>
+                  {['gemini', 'gemini-1.5-flash'].map(model => ( // Updated to SDK model name
+                    <div
+                      key={model}
+                      onClick={() => handleModelSelect(model)}
+                      style={{
+                        padding: '8px 16px',
+                        cursor: 'pointer',
+                        fontSize: '14px',
+                        color: currentModel === model ? '#007bff' : '#495057',
+                        background: currentModel === model ? '#f8f9ff' : 'transparent',
+                        ':hover': {
+                          background: '#f8f9fa'
+                        }
+                      }}
+                      onMouseEnter={(e) => {
+                        e.target.style.background = currentModel === model ? '#f8f9ff' : '#f8f9fa';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.target.style.background = currentModel === model ? '#f8f9ff' : 'transparent';
+                      }}
+                    >
+                      {getModelDisplayName(model)}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
